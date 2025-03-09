@@ -1,3 +1,12 @@
+import subprocess
+import sys
+
+# Pastikan matplotlib terinstall
+subprocess.run([sys.executable, "-m", "pip", "install", "matplotlib"])
+
+# Pastikan seaborn terinstall
+subprocess.run([sys.executable, "-m", "pip", "install", "seaborn"])
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
