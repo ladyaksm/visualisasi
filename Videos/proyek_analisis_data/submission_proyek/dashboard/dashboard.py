@@ -1,74 +1,126 @@
-
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import streamlit as st
-from babel.numbers import format_currency
-sns.set(style='dark')
-
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import folium
-from streamlit_folium import folium_static
+import matplotlib.colors as mcolors
 
-# Load dataset yang sudah dibersihkan
-@st.cache_data
-def load_data():
-    file_path = "final_ecommerce_data.csv"
-    df = pd.read_csv(file_path, parse_dates=["order_purchase_timestamp"])
-    return df
+# Load dataset hasil olahan
+df = pd.read_csv("final_ecommerce_data.csv")
 
-df = load_data()
+# Konversi order_purchase_timestamp ke datetime
+df["order_purchase_timestamp"] = pd.to_datetime(df["order_purchase_timestamp"])
+df["purchase_month"] = df["order_purchase_timestamp"].dt.to_period("M")
 
-# Sidebar - Filter Data
-st.sidebar.header("Filter Data")
-start_date = st.sidebar.date_input("Start Date", df["order_purchase_timestamp"].min())
-end_date = st.sidebar.date_input("End Date", df["order_purchase_timestamp"].max())
+# Hitung jumlah transaksi per kategori per bulan
+category_trends = df.groupby(["purchase_month", "product_category_name_english"])["order_id"].count().reset_index()
 
-# Filter berdasarkan tanggal
-filtered_df = df[(df["order_purchase_timestamp"] >= pd.Timestamp(start_date)) & 
-                 (df["order_purchase_timestamp"] <= pd.Timestamp(end_date))]
+# Ambil 5 kategori produk paling populer
+top_categories = category_trends.groupby("product_category_name_english")["order_id"].sum().reset_index()
+top_categories_list = top_categories.sort_values(by="order_id", ascending=False)["product_category_name_english"].head(5).tolist()
 
-# ** Overview**
-st.title("📊 E-Commerce Dashboard")
-st.subheader("Ringkasan Data")
-col1, col2, col3 = st.columns(3)
-col1.metric("Total Order", f"{filtered_df['order_id'].nunique():,}")
-col2.metric("Total Revenue", f"${filtered_df['price'].sum():,.2f}")
-col3.metric("Total Customers", f"{filtered_df['customer_id'].nunique():,}")
+# Sidebar Navigation
+st.sidebar.title("📊 Dashboard E-Commerce")
+menu = st.sidebar.radio("Pilih Visualisasi:", [
+    "Tren Pembelian Per Bulan",
+    "Kategori Produk Paling Banyak Dibeli",
+    "Rata-rata Harga Produk",
+    "Hubungan Seller & Pelanggan (Heatmap)",
+    "Kota dengan Pesanan Terbanyak",
+    "Distribusi Pesanan Per Provinsi"
+])
 
-# ** Tren Penjualan**
-st.subheader("📈 Tren Penjualan per Bulan")
-filtered_df.loc[:, "order_month"] = filtered_df["order_purchase_timestamp"].dt.to_period("M")
-sales_trend = filtered_df.groupby("order_month")["order_id"].count().reset_index()
+# 1️⃣ Visualisasi Tren Pembelian Kategori Produk Per Bulan
+if menu == "Tren Pembelian Per Bulan":
+    st.title("📈 Tren Pembelian Kategori Produk Per Bulan")
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    for category in top_categories_list:
+        data = category_trends[category_trends["product_category_name_english"] == category]
+        ax.plot(data["purchase_month"].astype(str), data["order_id"], marker="o", label=category)
+    
+    ax.set_xlabel("Bulan")
+    ax.set_ylabel("Jumlah Transaksi")
+    ax.set_title("Tren Pembelian Produk per Kategori dalam Beberapa Bulan Terakhir")
+    ax.legend()
+    plt.xticks(rotation=45)
+    plt.grid(True)
+    st.pyplot(fig)
 
-# Convert period ke string biar seaborn bisa baca
-sales_trend["order_month"] = sales_trend["order_month"].astype(str)
+# 2️⃣ Visualisasi Kategori Produk Paling Banyak Dibeli
+elif menu == "Kategori Produk Paling Banyak Dibeli":
+    st.title("📊 Kategori Produk Paling Banyak Dibeli")
+    top_categories = df['product_category_name_english'].value_counts().head(10)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.barplot(x=top_categories.values, y=top_categories.index, palette="coolwarm", ax=ax)
+    ax.set_xlabel("Jumlah Produk Terjual")
+    ax.set_ylabel("Kategori Produk")
+    ax.set_title("Top 10 Kategori Produk")
+    st.pyplot(fig)
 
-fig, ax = plt.subplots(figsize=(10, 5))
-sns.lineplot(data=sales_trend, x="order_month", y="order_id", marker="o", ax=ax)
-plt.xticks(rotation=45)
-plt.xlabel("Bulan")
-plt.ylabel("Jumlah Order")
-plt.title("Tren Penjualan dari Waktu ke Waktu")
-st.pyplot(fig)
+# # 3️⃣ Visualisasi Rata-rata Harga Produk Per Kategori
+elif menu == "Rata-rata Harga Produk":
+    st.title("💰 Rata-rata Harga Produk Per Kategori")
+    
+    # Hitung rata-rata harga per kategori
+    avg_price_per_category = df.groupby('product_category_name_english')['price'].mean().reset_index()
+    avg_price_per_category = avg_price_per_category.sort_values(by="price", ascending=False).head(10)
+    
+    # Plot dengan seaborn
+    fig, ax = plt.subplots(figsize=(12, 6))
+    sns.barplot(data=avg_price_per_category, x="price", y="product_category_name_english", palette="magma", ax=ax)
+    
+    ax.set_xlabel("Rata-rata Harga (IDR)")
+    ax.set_ylabel("Kategori Produk")
+    ax.set_title("Top 10 Kategori dengan Rata-rata Harga Tertinggi")
+    
+    st.pyplot(fig)
 
-# ** Peta Lokasi Seller & Pelanggan**
-st.subheader("📍 Distribusi Order Berdasarkan Wilayah")
+# 4️⃣ Visualisasi Hubungan Seller dan Pelanggan Berdasarkan Kota (Heatmap)
+elif menu == "Hubungan Seller & Pelanggan (Heatmap)":
+    st.title("🔥 Hubungan Seller & Pelanggan Berdasarkan Kota")
+    
+    # Buat pivot table jumlah transaksi seller-customer
+    pivot_table = df.pivot_table(index="seller_city", columns="customer_city", values="order_id", aggfunc='count', fill_value=0)
+    
+    # Filter kota dengan transaksi terbanyak
+    min_orders = 50
+    filtered_pivot = pivot_table.loc[pivot_table.sum(axis=1) > min_orders, pivot_table.sum(axis=0) > min_orders]
+    
+    # Ambil hanya top 20 seller & customer cities
+    top_seller_cities = df["seller_city"].value_counts().head(20).index
+    top_customer_cities = df["customer_city"].value_counts().head(20).index
+    filtered_pivot = filtered_pivot.loc[filtered_pivot.index.intersection(top_seller_cities),
+                                        filtered_pivot.columns.intersection(top_customer_cities)]
+    
+    # Plot heatmap
+    fig, ax = plt.subplots(figsize=(12, 8))
+    sns.heatmap(filtered_pivot, cmap="coolwarm", linewidths=0.5, norm=mcolors.LogNorm(), ax=ax)
+    ax.set_xlabel("Kota Pelanggan")
+    ax.set_ylabel("Kota Seller")
+    ax.set_title("Hubungan Seller dan Pelanggan Berdasarkan Kota")
+    plt.xticks(rotation=90)
+    plt.yticks(rotation=0)
+    st.pyplot(fig)
 
-state_counts = filtered_df["customer_state"].value_counts().reset_index()
-state_counts.columns = ["State", "Jumlah Order"]
+# 5️⃣ Visualisasi Kota dengan Pesanan Terbanyak
+elif menu == "Kota dengan Pesanan Terbanyak":
+    st.title("🏙️ Kota dengan Pesanan Terbanyak")
+    city_orders = df['customer_city'].value_counts().head(10)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.barplot(x=city_orders.values, y=city_orders.index, palette="Blues_r", ax=ax)
+    ax.set_xlabel("Jumlah Pesanan")
+    ax.set_ylabel("Kota")
+    ax.set_title("Top 10 Kota dengan Pesanan Terbanyak")
+    st.pyplot(fig)
 
-fig, ax = plt.subplots(figsize=(10, 5))
-sns.barplot(data=state_counts, x="Jumlah Order", y="State", palette="coolwarm", ax=ax)
-plt.xlabel("Jumlah Order")
-plt.ylabel("Provinsi Pelanggan")
-plt.title("Distribusi Order Berdasarkan Wilayah")
-st.pyplot(fig)
-
-st.write("📌 **Grafik menunjukkan distribusi jumlah order berdasarkan provinsi pelanggan.**")
-
-
-
+# 6️⃣ Visualisasi Distribusi Pesanan Berdasarkan Provinsi
+elif menu == "Distribusi Pesanan Per Provinsi":
+    st.title("🌍 Distribusi Pesanan Berdasarkan Provinsi")
+    province_orders = df['customer_state'].value_counts()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.barplot(x=province_orders.index, y=province_orders.values, palette="magma", ax=ax)
+    ax.set_xlabel("Provinsi")
+    ax.set_ylabel("Jumlah Pesanan")
+    ax.set_title("Distribusi Pesanan Per Provinsi")
+    plt.xticks(rotation=45)
+    st.pyplot(fig)
